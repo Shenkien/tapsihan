@@ -51,7 +51,7 @@ function estimateHeightMm(order: OrderRecord) {
   // Header block: logo, store name, "KITCHEN COPY", big order #, type, time, divider.
   // It now runs to roughly y = 56 mm (logo ~19.5 + name/copy/#/type/time ~30 + divider),
   // so the base has to cover that or the bottom of the slip gets cut off.
-  let mm = 58 + 10; // +10 for the boxed PAID stamp under the time
+  let mm = 58 + 5; // +5 for the "(PAID)" line under the order number
   for (const item of order.items) {
     mm += 5; // item lines are printed larger than the receipt's, so a bit taller
     const combo = orderItemComboContents(item);
@@ -105,7 +105,15 @@ export function printKitchenTicketSilent(order: OrderRecord) {
   // customer receipt.
   doc.setFontSize(22);
   doc.text(`#${order.orderNo}`, cx, y, { align: "center" });
-  y += 7;
+  y += 6;
+
+  // "(PAID)" sits directly under the order number, near the top of the slip.
+  // The bottom few mm of a thermal slip get torn off with the tear bar, so
+  // nothing important (like PAID) should live down there.
+  doc.setFont("courier", "bold");
+  doc.setFontSize(11);
+  doc.text("(PAID)", cx, y, { align: "center" });
+  y += 5;
 
   doc.setFont("courier", "normal");
   doc.setFontSize(9);
@@ -119,20 +127,7 @@ export function printKitchenTicketSilent(order: OrderRecord) {
   });
   doc.setFontSize(7.5);
   doc.text(time, cx, y, { align: "center" });
-  y += 3;
-
-  // "PAID" is printed here, in the header, as a boxed stamp. It used to be the
-  // very last line on the slip, but the last few mm of a thermal slip sit
-  // under the printer's tear bar and get torn off with the paper, so a line
-  // there is what kept getting cut off. Nothing important belongs down there.
-  doc.setLineDashPattern([], 0);
-  doc.setLineWidth(0.4);
-  doc.roundedRect(cx - 9, y, 18, 6.5, 1, 1);
-  doc.setFont("courier", "bold");
-  doc.setFontSize(11);
-  doc.text("PAID", cx, y + 4.7, { align: "center" });
-  doc.setLineWidth(0.2);
-  y += 6.5 + 3.5;
+  y += 4;
 
   doc.setLineDashPattern([0.5, 0.5], 0);
   doc.line(MARGIN_MM, y, PAGE_WIDTH_MM - MARGIN_MM, y);
