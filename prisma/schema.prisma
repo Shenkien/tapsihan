@@ -1,0 +1,437 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// A sellable Menu Item (Tapsilog, Bangsilog, a can of soda...). This is
+// NOT something you buy from a Supplier — you buy Ingredients, then a
+// Recipe says which Ingredients (and how much of each) a Menu Item uses.
+// Every Menu Item is expected to have a Recipe, including items sold
+// as-is (canned soda, bottled water get their own Ingredient + a 1-line
+// Recipe) — availability and stock deduction always come from the linked
+// Ingredients. `stock`, `needsRecipe` and the InventoryLog relation are legacy
+// columns from an earlier design. Nothing in the app reads or writes them any
+// more (admin schemas no longer accept them); they're kept only so existing
+// data doesn't need a migration.
+model Product {
+  id           Int             @id @default(autoincrement())
+  name         String
+  category     String
+  price        Float
+  cost         Float           @default(0)
+  stock        Int             @default(0)
+  imageUrl     String?
+  description  String?
+  bestSeller   Boolean         @default(false)
+  isNew        Boolean         @default(false)
+  active       Boolean         @default(true)
+  needsRecipe  Boolean         @default(true)
+  createdAt    DateTime        @default(now())
+  orderItems   OrderItem[]
+  inventoryLog InventoryLog[]
+  comboItems   ComboMealItem[]
+  recipeItems  RecipeItem[]
+}
+
+// A maintained pick-list, NOT a hard foreign key: Ingredient.category and
+// Product.category stay plain strings (matched by name) so every place
+// that already reads/writes those strings — Recipes, Purchase Orders,
+// exports, the kiosk menu — keeps working untouched. This table is just
+// where the "Category Maintenance" screen adds/renames/retires the names
+// that show up in the Ingredient and Menu Item forms' dropdowns, split by
+// `type` since an Ingredient category (Meats, Condiments) and a Menu Item
+// category (Silog, Soup) are different lists.
+model Category {
+  id        Int          @id @default(autoincrement())
+  name      String
+  type      CategoryType
+  active    Boolean      @default(true)
+  createdAt DateTime     @default(now())
+
+  @@unique([name, type])
+}
+
+enum CategoryType {
+  INGREDIENT
+  PRODUCT
+}
+
+// Same soft-reference pattern as Category: Ingredient.unit stays a plain
+// string (e.g. "KG", "PIECE") so existing rows and code need no migration.
+// This table is the maintained pick-list ("Unit of Measure Maintenance")
+// that feeds the unit dropdown when adding/editing an Ingredient.
+model UnitOfMeasure {
+  id           Int      @id @default(autoincrement())
+  name         String   @unique
+  abbreviation String   @unique
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+}
+
+// Generic key/value store for small admin-maintained settings that don't
+// warrant their own table — currently just the GCash payment details shown
+// at checkout (see the GCash settings in
+// lib/services/settings.ts). Keys are namespaced with a dot, e.g.
+// "gcash.qrImageUrl", so unrelated future settings can share this table
+// without colliding.
+// A discount staff can apply at the counter, e.g. Senior Citizen 20% or
+// Student 10%. Admins manage the list and the percentages (Admin >
+// Discounts); staff can only pick from the active ones.
+model Discount {
+  id         Int      @id @default(autoincrement())
+  name       String   @unique
+  percent    Float
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+// A raw material bought from a Supplier — onion, chicken thigh, whole
+// chicken, beef, bangus, egg, rice, etc. Never sold on its own; it's only
+// ever consumed through a Recipe. Bought "by kilo or bulk" or by the piece,
+// hence `unit` (as opposed to Product, which has no unit — a menu item is
+// just sold "1 each"). `category` and `unit` are plain strings matched
+// against the Category/UnitOfMeasure maintenance tables above, not FKs.
+model Ingredient {
+  id                Int                 @id @default(autoincrement())
+  name              String
+  category          String              @default("Uncategorized")
+  unit              String
+  stock             Float               @default(0)
+  cost              Float               @default(0)
+  lowStockThreshold Float               @default(5)
+  // For an item that's bought by weight but used by the piece (a whole fish,
+  // e.g. Bangus): `stock` stays the weight on-hand and is only ever moved by
+  // Purchase Orders. `pieceStock` is the usable count that Recipes and the
+  // Stock Action buttons actually work against. `piecesPerUnit` is the yield
+  // ratio (e.g. 5 Bangus per kg, or 5 cups of Rice per kg) — receiving a PO
+  // uses it to auto-add to `pieceStock` instead of requiring a manual count.
+  // `pieceUnitLabel` is what to call the piece (e.g. "pcs" or "cups").
+  trackByPiece      Boolean             @default(false)
+  pieceStock        Float               @default(0)
+  piecesPerUnit     Float               @default(1)
+  pieceUnitLabel    String              @default("pcs")
+  active            Boolean             @default(true)
+  // Optional "who do I usually buy this from" pointer. Only a hint: the
+  // low-stock alert shows it and New Purchase Order preselects it. What a
+  // supplier has actually sold you still comes from Purchase Orders.
+  supplierId        Int?
+  supplier          Supplier?           @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  createdAt         DateTime            @default(now())
+  recipeItems       RecipeItem[]
+  poItems           PurchaseOrderItem[]
+  logs              IngredientLog[]
+}
+
+// The Bill of Materials: one row = "this Menu Item's recipe uses this much
+// of this Ingredient". E.g. Bangsilog -> Bangus x1, Egg x1, Rice x1 cup.
+// A sale of the Menu Item walks these rows and deducts each Ingredient by
+// qty * qty-ordered, instead of deducting a single number on the Product.
+model RecipeItem {
+  id           Int        @id @default(autoincrement())
+  productId    Int
+  ingredientId Int
+  qty          Float
+  product      Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
+
+  @@unique([productId, ingredientId])
+}
+
+// Same shape as InventoryLog, but for Ingredient stock movements (restock
+// from a received PO or a manual add, waste, manual adjustment, and now
+// also the SALE deductions a recipe triggers).
+model IngredientLog {
+  id           Int        @id @default(autoincrement())
+  ingredientId Int
+  change       Float
+  reason       LogReason
+  // Which pool this entry moved — "stock" (kg/base unit) or "pieceStock".
+  target       String     @default("stock")
+  // Why it moved, in words — "Order #0012", "Received PO-0007", or whatever
+  // the admin typed on a manual Stock Action. Optional.
+  note         String?
+  // The order a SALE (or its cancel-return) belongs to. Lets a cancel reverse
+  // the exact amounts that were sold instead of re-reading the current recipe.
+  // Null for manual actions, PO receipts and logs written before this column.
+  orderId      Int?
+  createdAt    DateTime   @default(now())
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
+  order        Order?     @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+}
+
+// A bundle of existing Menu Items sold at one set price, e.g. "Tapsilog +
+// Drink Combo". Not a Product itself — the kiosk still deducts stock from
+// each underlying item via ComboMealItem.
+model ComboMeal {
+  id          Int             @id @default(autoincrement())
+  name        String
+  description String?
+  imageUrl    String?
+  price       Float
+  active      Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+  items       ComboMealItem[]
+  orderItems  OrderItem[]
+}
+
+model ComboMealItem {
+  id          Int       @id @default(autoincrement())
+  comboMealId Int
+  productId   Int
+  qty         Int       @default(1)
+  comboMeal   ComboMeal @relation(fields: [comboMealId], references: [id], onDelete: Cascade)
+  product     Product   @relation(fields: [productId], references: [id])
+
+  @@unique([comboMealId, productId])
+}
+
+model Order {
+  id            Int           @id @default(autoincrement())
+  orderNo       String        @unique
+  barcode       String        @unique
+  type          OrderType
+  source        OrderSource
+  // Amount the customer actually pays — already net of any discount.
+  total         Float
+  // Discount applied at the counter (Senior, Student, ...). The name and
+  // percent are copied onto the order so editing a discount later never
+  // rewrites what an old receipt showed. subtotal is the pre-discount
+  // amount; it stays null on orders that never had a discount.
+  subtotal        Float?
+  discountName    String?
+  discountPercent Float   @default(0)
+  discountAmount  Float   @default(0)
+  notes         String?
+  // SHA-256 of the secret handed to the customer when the order was created;
+  // it lets them cancel this one order while it is still unpaid. Never sent
+  // to any client.
+  cancelTokenHash String?
+  paymentMethod PaymentMethod
+  status        OrderStatus   @default(CREATED)
+  createdAt     DateTime      @default(now())
+  paidAt        DateTime?
+  receivedAt    DateTime?
+  readyAt       DateTime?
+  completedAt   DateTime?
+  // Optional client-generated key (Idempotency-Key header) so a retried
+  // submit returns the order it already created instead of a duplicate.
+  idempotencyKey String?      @unique
+  items         OrderItem[]
+  payment       Payment?
+  ingredientLogs IngredientLog[]
+
+  @@index([status, createdAt])
+  @@index([paidAt])
+}
+
+// A line can be EITHER a regular Menu Item (productId) OR a Combo Meal
+// bundle (comboMealId) — never both, never neither (enforced in
+// lib/validations.ts's orderItemSchema, since Prisma can't express an
+// exactly-one-of constraint). comboItemsSnapshot freezes what the combo
+// contained (name + qty per included item) at the moment this order was
+// placed, so editing or deleting the ComboMeal later never rewrites what
+// an old kitchen ticket/receipt showed was actually sold. It's null for
+// a regular product line.
+model OrderItem {
+  id                 Int       @id @default(autoincrement())
+  orderId            Int
+  productId          Int?
+  comboMealId        Int?
+  qty                Int
+  notes              String?
+  unitPrice          Float
+  comboItemsSnapshot Json?
+  order              Order      @relation(fields: [orderId], references: [id])
+  product            Product?   @relation(fields: [productId], references: [id])
+  comboMeal          ComboMeal? @relation(fields: [comboMealId], references: [id])
+}
+
+model Payment {
+  id             Int           @id @default(autoincrement())
+  orderId        Int           @unique
+  method         PaymentMethod
+  reference      String?
+  // The real GCash reference number, typed in by staff from the customer's
+  // payment screen when they confirm. Unique so one real payment can't be
+  // used to confirm two different orders (NULLs never collide, so cash rows
+  // and old rows are unaffected).
+  gcashRef       String?       @unique
+  // Staff.id of whoever confirmed the payment (see also AuditLog).
+  confirmedById  Int?
+  amountReceived Float?
+  change         Float?
+  status         String        @default("pending")
+  paidAt         DateTime?
+  order          Order         @relation(fields: [orderId], references: [id])
+}
+
+model InventoryLog {
+  id        Int       @id @default(autoincrement())
+  productId Int
+  change    Int
+  reason    LogReason
+  createdAt DateTime  @default(now())
+  product   Product   @relation(fields: [productId], references: [id])
+}
+
+model Staff {
+  id           Int       @id @default(autoincrement())
+  name         String
+  username     String    @unique
+  passwordHash String
+  role         StaffRole @default(STAFF)
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  // Set when an admin created the account or reset its password: whoever
+  // signs in with that admin-chosen password must pick their own before
+  // anything else works (enforced in proxy.ts, the layouts and requireRole).
+  mustChangePassword Boolean @default(false)
+  // Bumped on every password change/reset. The value is copied into the
+  // login JWT, and a token whose copy no longer matches is rejected — that
+  // is what signs out sessions that were open when the password changed.
+  passwordChangedAt  DateTime @default(now())
+  // Integer session version: incremented on every password change/reset and
+  // by the maintenance script. The login JWT carries a copy (`sv`); a token
+  // whose copy differs is rejected. Unlike comparing timestamps, this doesn't
+  // depend on millisecond precision surviving the database round-trip.
+  sessionVersion     Int      @default(0)
+}
+
+// A trail of sensitive admin actions — who did what, to which record, and
+// when. Written by the routes that change something worth tracing back:
+// account management, price edits, and purchase order receiving.
+model AuditLog {
+  id          Int      @id @default(autoincrement())
+  action      String
+  entityType  String
+  entityId    Int?
+  description String
+  actorName   String
+  // Who did it, by id. actorName is only a display name (two admins can
+  // share one); this is the unambiguous link. Null for old rows and for
+  // events with no signed-in actor (failed logins, console scripts).
+  actorId     Int?
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// One row per failed sign-in or failed password re-confirmation. Counting
+// recent rows is how login throttling works (see lib/auth-throttle.ts) —
+// kept in the database rather than in memory so it holds up across
+// serverless instances and restarts. Old rows are pruned automatically.
+model AuthFailure {
+  id        Int      @id @default(autoincrement())
+  // "LOGIN" or "REAUTH" (an admin re-typing their own password, or a
+  // change-password attempt with the wrong current password), or "PRINT"
+  // (a print-bridge request — one row per request, see lib/print-throttle.ts).
+  kind      String
+  // LOGIN: the username that was typed (lowercased, whether or not it
+  // exists, so a lockout can't be used to tell real usernames apart).
+  // REAUTH: "staff:<id>".
+  subject   String
+  ip        String
+  createdAt DateTime @default(now())
+
+  @@index([kind, subject, createdAt])
+  @@index([kind, ip, createdAt])
+  @@index([createdAt])
+}
+
+// Who ingredients get bought from — step 1 of the stock cycle:
+// buy ingredient -> Supplier -> Purchase Order -> delivered/received -> stock goes up.
+model Supplier {
+  id             Int             @id @default(autoincrement())
+  name           String
+  contactPerson  String?
+  phone          String?
+  email          String?
+  createdAt      DateTime        @default(now())
+  purchaseOrders PurchaseOrder[]
+  ingredients    Ingredient[]
+}
+
+model PurchaseOrder {
+  id         Int                 @id @default(autoincrement())
+  poNumber   String              @unique
+  supplierId Int
+  status     PurchaseOrderStatus @default(ORDERED)
+  totalCost  Float               @default(0)
+  createdAt  DateTime            @default(now())
+  // Day the supplier said they'd deliver. Optional — some suppliers just
+  // deliver same-day or don't give a date. Stored as a plain date (UTC
+  // midnight of the chosen day); overdue = today is past this day.
+  expectedDate DateTime?
+  receivedAt DateTime?
+  supplier   Supplier            @relation(fields: [supplierId], references: [id])
+  items      PurchaseOrderItem[]
+}
+
+// Purchase Orders always buy Ingredients, never Menu Items — a supplier
+// sells you raw goods, not a finished Bangsilog.
+model PurchaseOrderItem {
+  id              Int           @id @default(autoincrement())
+  purchaseOrderId Int
+  ingredientId    Int
+  qty             Float
+  unitCost        Float
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  ingredient      Ingredient    @relation(fields: [ingredientId], references: [id])
+}
+
+enum OrderType {
+  DINE_IN
+  TAKEOUT
+}
+
+enum OrderSource {
+  KIOSK
+  QR
+  COUNTER
+}
+
+enum PaymentMethod {
+  CASH
+  GCASH
+}
+
+enum OrderStatus {
+  CREATED
+  PAID
+  READY
+  COMPLETED
+  CANCELLED
+}
+
+enum LogReason {
+  RESTOCK
+  ADJUSTMENT
+  WASTE
+  SALE
+}
+
+enum StaffRole {
+  STAFF
+  ADMIN
+}
+
+enum PurchaseOrderStatus {
+  ORDERED
+  RECEIVED
+  CANCELLED
+}
+

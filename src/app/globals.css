@@ -1,0 +1,112 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-body);
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  margin: 0;
+}
+
+p {
+  margin: 0;
+}
+
+.screen {
+  /* Fixed to the viewport (not min-height) so this is the one place that
+     scrolls the whole page. Every child region that can grow long (the
+     admin sidebar, the admin main content, the staff order queue, etc.)
+     is responsible for its own internal overflow-y-auto instead — that's
+     what keeps the sidebar and the content panel each scrolling within
+     their own height rather than the whole page scrolling and the
+     sidebar's bottom edge floating in the middle of a long list. */
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.big-number {
+  font-family: var(--font-display);
+  font-weight: 800;
+  line-height: 1;
+}
+
+::selection {
+  background: theme("colors.turmeric.500");
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+:focus-visible {
+  outline: 3px solid theme("colors.turmeric.500");
+  outline-offset: 2px;
+}
+
+@layer utilities {
+  /* Subtle cream texture used behind hero/auth surfaces — the resource
+     pack's own cream-pattern.svg, low-opacity so it reads as warmth/texture
+     rather than decoration. Matches the kiosk design system's optional
+     background guidance. */
+  .bg-brand-pattern {
+    background-image: url("/brand/pattern.svg");
+    background-size: 800px 800px;
+  }
+
+  /* Gentle entrance for the kiosk welcome screen's crest/buttons — respects
+     prefers-reduced-motion via the global rule above, which zeroes out all
+     animations/transitions for users who've asked for less motion. */
+  .animate-fade-up {
+    animation: fade-up 0.6s ease-out both;
+  }
+}
+
+@keyframes row-flash {
+  0% {
+    background-color: rgb(167 243 208);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@layer utilities {
+  /* Brief green flash on a row/card that was just added or edited. */
+  .row-flash {
+    animation: row-flash 1.8s ease-out;
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

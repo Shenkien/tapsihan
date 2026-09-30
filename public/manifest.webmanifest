@@ -1,0 +1,14 @@
+{
+  "name": "Kuy's Tapsihan",
+  "short_name": "Tapsihan",
+  "description": "Kiosk ordering for Kuy's Tapsihan",
+  "start_url": "/kiosk",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#fff8ef",
+  "theme_color": "#fff8ef",
+  "icons": [
+    { "src": "/icon.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/apple-icon.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 300">
+<rect width="900" height="300" rx="35" fill="#760000"/>
+<circle cx="105" cy="105" r="58" fill="#FFC800"/>
+<path d="M80 75l50 55M130 75l-50 55" stroke="#760000" stroke-width="12" stroke-linecap="round"/>
+<text x="190" y="125" font-family="Arial Black, sans-serif" font-size="86" fill="#FFF8EF">KUY'S</text>
+<text x="190" y="215" font-family="Arial Black, sans-serif" font-size="78" fill="#FFC800">TAPSIHAN</text>
+<text x="570" y="260" font-family="Arial, sans-serif" font-size="25" font-weight="700" fill="#FFF8EF">SIMPLE. SARAP. SOLID.</text>
+</svg>
