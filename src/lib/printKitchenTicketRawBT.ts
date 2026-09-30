@@ -48,14 +48,17 @@ const CONTENT_WIDTH_MM = PAGE_WIDTH_MM - MARGIN_MM * 2;
 // printThermalRawBT.ts's estimateHeightMm — errs generous so nothing gets
 // cut off at the bottom of the slip.
 function estimateHeightMm(order: OrderRecord) {
-  let mm = 26 + 17 + 4; // header block (+17 for the logo, +4 so the big order # has room below "KITCHEN COPY"): store name, "KITCHEN COPY", order # (large), type, time, divider
+  // Header block: logo, store name, "KITCHEN COPY", big order #, type, time, divider.
+  // It now runs to roughly y = 56 mm (logo ~19.5 + name/copy/#/type/time ~30 + divider),
+  // so the base has to cover that or the "PAID" line at the bottom gets cut off.
+  let mm = 58;
   for (const item of order.items) {
     mm += 5; // item lines are printed larger than the receipt's, so a bit taller
     const combo = orderItemComboContents(item);
     if (combo) mm += combo.length * 4;
   }
   if (order.notes) mm += 10; // order-level note, printed bold/larger — it matters in the kitchen
-  mm += 10; // footer margin
+  mm += 20; // "PAID" line + blank paper below it, so the printer's cut/tear point falls after it, not through it
   return Math.max(mm, 50);
 }
 
