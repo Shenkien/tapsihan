@@ -3,6 +3,7 @@
 import jsPDF from "jspdf";
 import { orderItemComboContents, orderItemName, type OrderRecord } from "@/types/models";
 import { STORE_NAME } from "@/lib/storeInfo";
+import { RECEIPT_LOGO_DATA_URI, RECEIPT_LOGO_WIDTH_MM, RECEIPT_LOGO_HEIGHT_MM } from "@/lib/receiptLogo";
 
 /**
  * Silent thermal printing for the KITCHEN ticket, via RawBT — the kitchen's
@@ -47,7 +48,7 @@ const CONTENT_WIDTH_MM = PAGE_WIDTH_MM - MARGIN_MM * 2;
 // printThermalRawBT.ts's estimateHeightMm — errs generous so nothing gets
 // cut off at the bottom of the slip.
 function estimateHeightMm(order: OrderRecord) {
-  let mm = 26; // header block: store name, "KITCHEN COPY", order # (large), type, time, divider
+  let mm = 26 + 17 + 4; // header block (+17 for the logo, +4 so the big order # has room below "KITCHEN COPY"): store name, "KITCHEN COPY", order # (large), type, time, divider
   for (const item of order.items) {
     mm += 5; // item lines are printed larger than the receipt's, so a bit taller
     const combo = orderItemComboContents(item);
@@ -64,7 +65,24 @@ export function printKitchenTicketSilent(order: OrderRecord) {
   const heightMm = estimateHeightMm(order);
   const doc = new jsPDF({ unit: "mm", format: [PAGE_WIDTH_MM, heightMm] });
   const cx = PAGE_WIDTH_MM / 2;
-  let y = 6;
+  let y = 3;
+
+  // Same logo as the customer receipt (see printThermalRawBT.ts), centered
+  // above the store name with a line on each side:  ------  (logo)  ------
+  // Best-effort: a problem drawing it must never stop the ticket printing.
+  try {
+    doc.addImage(RECEIPT_LOGO_DATA_URI, "PNG", cx - RECEIPT_LOGO_WIDTH_MM / 2, y, RECEIPT_LOGO_WIDTH_MM, RECEIPT_LOGO_HEIGHT_MM);
+    const lineY = y + RECEIPT_LOGO_HEIGHT_MM / 2;
+    const gap = 3;
+    doc.setLineDashPattern([], 0);
+    doc.setLineWidth(0.3);
+    doc.line(MARGIN_MM, lineY, cx - RECEIPT_LOGO_WIDTH_MM / 2 - gap, lineY);
+    doc.line(cx + RECEIPT_LOGO_WIDTH_MM / 2 + gap, lineY, PAGE_WIDTH_MM - MARGIN_MM, lineY);
+    doc.setLineWidth(0.2); // back to default so the dashed dividers below look as before
+    y += RECEIPT_LOGO_HEIGHT_MM + 4;
+  } catch {
+    y = 6;
+  }
 
   doc.setFont("courier", "bold");
   doc.setFontSize(10);
@@ -73,7 +91,10 @@ export function printKitchenTicketSilent(order: OrderRecord) {
 
   doc.setFontSize(8);
   doc.text("KITCHEN COPY", cx, y, { align: "center" });
-  y += 5;
+  // The 22pt order number below is ~5.5 mm tall from its baseline up, so the
+  // baseline needs to sit well below "KITCHEN COPY" (it used to be only 5 mm,
+  // which made the two lines overlap on the printed slip).
+  y += 10;
 
   // The order number is the single most important thing on this slip — it's
   // how staff match the finished food back to the right customer once the
