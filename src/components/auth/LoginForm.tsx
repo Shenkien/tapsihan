@@ -75,15 +75,9 @@ export default function LoginForm({
       // and the old `if (res?.error)` treated that as success and navigated
       // away from a login that never happened.
       if (!res || res.error) {
-        // The server tags a lockout with code "locked"; every other failure
-        // (wrong password, unknown user, deactivated) is deliberately the
-        // same message so the screen never says which one it was.
-        const code = (res as { code?: string } | undefined)?.code;
-        setError(
-          code === "locked"
-            ? "Too many failed attempts. Please wait about 15 minutes, or ask an admin to reset your password."
-            : "Invalid username or password"
-        );
+        // Every failure (wrong password, unknown user, deactivated) is
+        // deliberately the same message so the screen never says which one.
+        setError("Invalid username or password");
         return;
       }
 

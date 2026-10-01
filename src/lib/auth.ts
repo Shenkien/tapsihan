@@ -3,13 +3,9 @@ import Credentials from "next-auth/providers/credentials";
 import { prisma } from "@/lib/prisma";
 import { loginSchema } from "@/lib/validations";
 import { verifyPassword } from "@/lib/passwords";
-import {
-  clearLoginFailures,
-  clientIp,
-  beginLoginAttempt,
-  failLoginAttempt,
-} from "@/lib/auth-throttle";
+import { clientIp } from "@/lib/auth-throttle";
 import { logAudit } from "@/lib/services/audit";
+import { ensureBootstrapAdmin } from "@/lib/bootstrap-admin";
 
 export type Role = "STAFF" | "ADMIN";
 
@@ -18,9 +14,6 @@ export type Role = "STAFF" | "ADMIN";
 // wrong password, deactivated account) so the response never says which.
 class InvalidLogin extends CredentialsSignin {
   code = "invalid";
-}
-class LockedLogin extends CredentialsSignin {
-  code = "locked";
 }
 
 // A signed-in admin session lasts one working day, then the person has to log
@@ -48,12 +41,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const { username, password } = parsed.data;
         const ip = clientIp(request.headers);
 
-        // Record the attempt FIRST, then check the lock (which counts it), so
-        // parallel guesses can't all pass a check that ran before any of them
-        // was recorded. A locked-out client never reaches the password check,
-        // so it can't keep testing guesses to see if one is right. On success
-        // clearLoginFailures() below removes the row again.
-        if ((await beginLoginAttempt(username, ip)) === null) throw new LockedLogin();
+        // If the database has no admin at all (fresh or wiped), create the
+        // one described by BOOTSTRAP_ADMIN_* before looking the user up.
+        await ensureBootstrapAdmin();
 
         const staff = await prisma.staff.findUnique({ where: { username } });
 
@@ -62,23 +52,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // password and timing can't be used to find real usernames.
         const passwordOk = await verifyPassword(password, staff?.passwordHash ?? null);
 
-        if (!staff || !passwordOk || !staff.active) {
-          const justLocked = await failLoginAttempt(username, ip);
-          if (justLocked) {
-            await logAudit({
-              action: "auth.lockout",
-              entityType: "Auth",
-              entityId: staff?.id,
-              description: `Too many failed logins for "${username}" from ${ip} — locked out for a while`,
-              actorName: username,
-              actorId: staff?.id,
-            });
-            throw new LockedLogin();
-          }
-          throw new InvalidLogin();
-        }
+        if (!staff || !passwordOk || !staff.active) throw new InvalidLogin();
 
-        await clearLoginFailures(username);
         if (staff.role === "ADMIN") {
           await logAudit({
             action: "auth.login",

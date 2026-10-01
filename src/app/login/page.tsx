@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import LoginForm from "@/components/auth/LoginForm";
+import { ensureBootstrapAdmin } from "@/lib/bootstrap-admin";
 
 // One login for everybody. The account's role decides where it lands after
 // signing in: admins go to /admin, staff go to the counter at /staff.
@@ -9,6 +10,9 @@ export default async function LoginPage({
   searchParams: Promise<{ fresh?: string; changed?: string }>;
 }) {
   const { fresh, changed } = await searchParams;
+
+  // Self-heal: recreate the admin from BOOTSTRAP_ADMIN_* if none exists.
+  await ensureBootstrapAdmin();
 
   // ?fresh=1 signs out any old session, which the kiosk's login link relies
   // on. A link on another website must not be able to log someone out, so it

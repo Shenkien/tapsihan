@@ -8,25 +8,13 @@ import { prisma } from "@/lib/prisma";
 // own once enough old failures age out of the window — no unlock step, and
 // nothing that stays locked forever.
 //
-// Login uses three tiers, because each one alone has a hole:
-//   userIp — this username from this address. Stops guessing at one account
-//            from one place, without letting a stranger lock the real owner
-//            out from everywhere.
-//   ip     — any username from this address. Stops one address spraying
-//            guesses across many accounts.
-//   user   — this username from anywhere. Stops a slow attack spread over
-//            many addresses; set higher so it isn't easy to use as a
-//            "lock the admin out" trick.
-// The username tiers key on whatever was typed, whether or not the account
-// exists, so a lockout can't reveal which usernames are real.
+// Login itself is NOT throttled (the shop has only a few staff accounts).
+// This throttle now only protects the admin "confirm your password" prompt.
 
 export const THROTTLE_WINDOW_MS = 15 * 60 * 1000;
-const LIMIT_USER_IP = 5;
-const LIMIT_IP = 30;
-const LIMIT_USER = 20;
 const LIMIT_REAUTH = 5;
 
-type Kind = "LOGIN" | "REAUTH";
+type Kind = "REAUTH";
 
 /** Milliseconds until this tier unlocks, or 0 if it isn't locked. */
 async function tierLockedMs(where: Prisma.AuthFailureWhereInput, limit: number): Promise<number> {
@@ -53,53 +41,6 @@ async function insertFailure(kind: Kind, subject: string, ip: string): Promise<n
   return row.id;
 }
 
-// ---------------------------------------------------------------- login ----
-
-/**
- * `extra` raises every limit by that many. beginLoginAttempt() records the
- * attempt BEFORE the password is checked, so that attempt is already in the
- * table when the lock is evaluated and has to be allowed for.
- */
-export async function loginLockedMs(username: string, ip: string, extra = 0): Promise<number> {
-  const [a, b, c] = await Promise.all([
-    tierLockedMs({ kind: "LOGIN", subject: username, ip }, LIMIT_USER_IP + extra),
-    tierLockedMs({ kind: "LOGIN", ip }, LIMIT_IP + extra),
-    tierLockedMs({ kind: "LOGIN", subject: username }, LIMIT_USER + extra),
-  ]);
-  return Math.max(a, b, c);
-}
-
-/**
- * Step 1 of a login. The attempt is written first and the lock checked after,
- * so parallel guesses can't all slip past a check that runs before any of
- * them has been recorded (bcrypt takes ~250 ms, a wide window). If the
- * account/address is locked the row is removed again, so refused attempts
- * don't push the unlock time further out.
- *
- * Returns the attempt id (pass it to failLogin/passLogin) or null when locked.
- */
-export async function beginLoginAttempt(username: string, ip: string): Promise<number | null> {
-  const id = await insertFailure("LOGIN", username, ip);
-  if ((await loginLockedMs(username, ip, 1)) > 0) {
-    await prisma.authFailure.delete({ where: { id } }).catch(() => {});
-    return null;
-  }
-  return id;
-}
-
-/**
- * The attempt was wrong: it stays recorded as a failure. Returns true if this
- * failure is the one that tripped a lock.
- */
-export async function failLoginAttempt(username: string, ip: string): Promise<boolean> {
-  return (await loginLockedMs(username, ip)) > 0;
-}
-
-/** A successful login wipes that account's failure history. */
-export async function clearLoginFailures(username: string) {
-  await prisma.authFailure.deleteMany({ where: { kind: "LOGIN", subject: username } });
-}
-
 // --------------------------------------------------------------- reauth ----
 
 const reauthSubject = (staffId: number) => `staff:${staffId}`;
@@ -124,7 +65,7 @@ export async function clearAllFailuresFor(staffId: number, username: string) {
   await prisma.authFailure.deleteMany({
     where: {
       OR: [
-        { kind: "LOGIN", subject: username.toLowerCase() },
+        { kind: "LOGIN", subject: username.toLowerCase() }, // leftover rows from before
         { kind: "REAUTH", subject: reauthSubject(staffId) },
       ],
     },

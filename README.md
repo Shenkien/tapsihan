@@ -365,7 +365,7 @@ create the (empty) repo on GitHub first if it doesn't exist yet.
 
 ```bash
 git add .
-git commit -m "Describe what changed"
+git commit -m "Auto Account"
 git push
 ```
 
