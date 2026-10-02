@@ -102,6 +102,15 @@ export async function buildKioskReceiptHtml(
          }Then show this receipt at the counter to confirm.</div>`
       : `<div class="center">Payment: ${order.paymentMethod === "GCASH" ? "GCASH \u2713" : "CASH \u2713"}</div>`;
 
+  // Cash tendered + change on a paid CASH receipt (from the Payment row staff
+  // filled in at the counter). Empty for GCash, unpaid variants, or old rows.
+  const received = order.payment?.amountReceived;
+  const tenderedHtml =
+    opts.variant === "paid" && order.paymentMethod === "CASH" && received != null
+      ? `<div class="item-row"><span>CASH</span><span>\u20B1${received.toFixed(2)}</span></div>
+  <div class="item-row"><b>CHANGE</b><b>\u20B1${(order.payment?.change ?? Math.max(0, received - order.total)).toFixed(2)}</b></div>`
+      : "";
+
   const barcodeBlock = opts.barcodeImage
     ? `<img class="barcode" src="${opts.barcodeImage}" alt="barcode" />`
     : `<div class="center mono">${escapeHtml(order.barcode)}</div>`;
@@ -157,6 +166,7 @@ export async function buildKioskReceiptHtml(
       : ""
   }
   <div class="total-row"><span>TOTAL</span><span>\u20B1${order.total.toFixed(2)}</span></div>
+  ${tenderedHtml}
   ${statusBlock}
   ${barcodeBlock}
   <div class="footer">We'll call your number when ready.<br/>${escapeHtml(RECEIPT_THANK_YOU)}</div>

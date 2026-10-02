@@ -61,6 +61,17 @@ const CONTENT_WIDTH_MM = PAGE_WIDTH_MM - MARGIN_MM * 2;
 
 type ReceiptVariant = "cash-pending" | "gcash-pending" | "paid";
 
+// Cash tendered + change, shown on a paid CASH receipt only. Comes from the
+// Payment row staff filled in on the counter screen (amountReceived/change).
+// Returns null for GCash, unpaid variants, or old rows with no amount saved.
+function cashTendered(order: OrderRecord, variant: ReceiptVariant) {
+  if (variant !== "paid" || order.paymentMethod !== "CASH") return null;
+  const received = order.payment?.amountReceived;
+  if (received == null) return null;
+  const change = order.payment?.change ?? Math.max(0, received - order.total);
+  return { received, change };
+}
+
 // Rough per-section height estimate so the PDF page is tall enough to fit
 // everything. jsPDF pages don't auto-grow, so this errs generous — a little
 // extra blank paper at the end is harmless on a continuous thermal roll,
@@ -79,6 +90,7 @@ function estimateHeightMm(order: OrderRecord, opts: { barcodeImage: string | nul
   // sentences of instructions, so both need real room; gcash-pending gets
   // a little extra since it may also carry the store's account name/number.
   mm += opts.variant === "cash-pending" ? 16 : opts.variant === "gcash-pending" ? 20 : 6;
+  if (cashTendered(order, opts.variant)) mm += 9; // CASH + CHANGE rows
   mm += opts.barcodeImage ? 22 : 6; // barcode image or fallback text
   mm += 22; // footer (wrapped lines) + bottom margin, plus a wrapped address line
   return Math.max(mm, 60);
@@ -203,7 +215,21 @@ export async function printThermalReceiptSilent(
   doc.setFontSize(11);
   doc.text("TOTAL", MARGIN_MM, y);
   doc.text(`P${order.total.toFixed(2)}`, PAGE_WIDTH_MM - MARGIN_MM, y, { align: "right" });
-  y += 6;
+  y += 5;
+
+  const tendered = cashTendered(order, opts.variant);
+  if (tendered) {
+    doc.setFont("courier", "normal");
+    doc.setFontSize(9);
+    doc.text("CASH", MARGIN_MM, y);
+    doc.text(`P${tendered.received.toFixed(2)}`, PAGE_WIDTH_MM - MARGIN_MM, y, { align: "right" });
+    y += 4;
+    doc.setFont("courier", "bold");
+    doc.text("CHANGE", MARGIN_MM, y);
+    doc.text(`P${tendered.change.toFixed(2)}`, PAGE_WIDTH_MM - MARGIN_MM, y, { align: "right" });
+    y += 4;
+  }
+  y += 1;
 
   doc.setFont("courier", "normal");
   doc.setFontSize(8);

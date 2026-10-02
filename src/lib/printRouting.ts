@@ -8,10 +8,8 @@
  *   ----------------   ---------------------------------   ---------------------------------
  *   KIOSK              kiosk printer (customer takes it)   counter printer (customer is at
  *                                                          the counter now, not the kiosk)
- *   COUNTER (staff)    counter printer (full receipt)      nobody - the kitchen ticket that
- *                                                          prints on the same printer at that
- *                                                          moment already shows the order
- *                                                          number and items
+ *   COUNTER (staff)    nobody (nothing is printed when     counter printer (full receipt with
+ *                      the order is entered)               cash received + change)
  *   QR (own phone)     nobody - digital receipt            nobody
  *
  * KITCHEN tickets are separate ("kitchen-ticket:print-requested") and always
@@ -26,5 +24,7 @@ export type PrintStation = "kiosk" | "counter";
 export function receiptStation(source: OrderSourceName, variant: ReceiptVariant): PrintStation | null {
   if (source === "QR") return null;
   if (source === "KIOSK") return variant === "paid" ? "counter" : "kiosk";
-  return variant === "paid" ? null : "counter";
+  // COUNTER (staff-entered): nothing prints when the order is entered; the
+  // full receipt (with cash received + change) prints once staff confirm payment.
+  return variant === "paid" ? "counter" : null;
 }

@@ -164,6 +164,9 @@ export default function OrderFlow({ source }: { source: OrderSource }) {
 
   useEffect(() => {
     if (!hasPrinter || !payment.order) return;
+    // Staff-entered (COUNTER) orders print nothing here: the receipt, with the
+    // cash received + change, is printed server-side when staff confirm payment.
+    if (source === "COUNTER") return;
     const orderNo = payment.order.orderNo;
 
     if (paymentMethod === "CASH" && payment.status === "created" && printedRef.current.pending !== orderNo) {
@@ -441,7 +444,8 @@ export default function OrderFlow({ source }: { source: OrderSource }) {
                 // was blocking the next customer in line from ordering.
                 onAutoReset={startOver}
                 onPrintReceipt={
-                  hasPrinter
+                  // COUNTER orders only get a receipt once paid (printed on confirm).
+                  hasPrinter && !(source === "COUNTER" && payment.status !== "paid")
                     ? () =>
                         printReceiptNow(
                           payment.status === "paid" ? "paid" : paymentMethod === "GCASH" ? "gcash-pending" : "cash-pending"

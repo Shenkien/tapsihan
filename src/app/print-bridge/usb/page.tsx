@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getPusherClient } from "@/lib/pusher-client";
 import { ORDERS_CHANNEL } from "@/lib/pusher-channels";
-import { buildKioskReceiptHtml, buildCounterConfirmationTicketHtml, printThermalReceipt } from "@/lib/printReceipt";
+import { buildKioskReceiptHtml, printThermalReceipt } from "@/lib/printReceipt";
 import { bridgeHeaders, getBridgeKey } from "@/lib/bridgeKey";
 import type { OrderRecord } from "@/types/models";
 
@@ -21,22 +21,13 @@ import type { OrderRecord } from "@/types/models";
  * desktop equivalent of print-bridge/page.tsx: same event, same ack/retry
  * behavior, different printing mechanism underneath.
  *
- * WHAT TRIGGERS A PRINT HERE: both are already wired up server/client side
- * — nothing else needed — but they print DIFFERENT documents:
- *   - Staff creating a new walk-in order (OrderFlow.tsx, source="COUNTER")
- *     POSTs to /api/print-bridge/request with variant "cash-pending" or
- *     "gcash-pending" the moment the order is created -> prints the FULL
- *     receipt (same store header / items / total / barcode / footer as the
- *     kiosk gets), so a GCash counter order also gets a paper receipt
- *     up front instead of only after staff confirm the payment.
- *   - Staff confirming a cash payment, or a GCash payment clearing, fires
- *     the same "receipt:print-requested" event server-side with variant
- *     "paid" (see confirm-cash/route.ts and paymentFlow.ts) -> prints a
- *     short confirmation slip instead: just the order number and what was
- *     ordered, no prices/payment method/barcode. That's intentional — the
- *     customer already has their full receipt from order time; this one
- *     is for staff to glance at and match to the right order.
- * Both broadcast on the same Pusher "orders" channel this page listens on.
+ * WHAT TRIGGERS A PRINT HERE: staff confirming a cash payment, or a GCash
+ * payment clearing, fires "receipt:print-requested" with variant "paid"
+ * (see confirm-cash/route.ts and paymentFlow.ts) -> prints the FULL receipt
+ * for a COUNTER order, including cash received and change. Nothing prints
+ * when a staff-entered order is first created; the "cash-pending" /
+ * "gcash-pending" events are ignored here.
+ * The event broadcasts on the same Pusher "orders" channel this page listens on.
  *
  * SOURCE FILTERING: the SAME event also fires for KIOSK orders, which the
  * phone/RawBT bridge at print-bridge/page.tsx handles. The event payload
@@ -136,14 +127,14 @@ export default function PrintBridgeUsbPage() {
             seenRef.current.delete(key);
             return;
           }
-          // "cash-pending"/"gcash-pending" (a brand-new order, either
-          // payment method) prints the full customer receipt; "paid" (a
-          // confirmed payment) prints the short order#+items slip instead
-          // — see the file header comment.
-          const html =
-            data.variant === "paid"
-              ? buildCounterConfirmationTicketHtml(body.order)
-              : await buildKioskReceiptHtml(body.order, { barcodeImage: body.barcodeImage, variant: data.variant });
+          // Counter orders print nothing when entered (pending variants);
+          // the full receipt, with cash received + change, prints once
+          // staff confirm payment ("paid").
+          if (data.variant !== "paid") {
+            seenRef.current.delete(key);
+            return;
+          }
+          const html = await buildKioskReceiptHtml(body.order, { barcodeImage: body.barcodeImage, variant: "paid" });
           printThermalReceipt(html);
           setStatus("Waiting for orders…");
           postAck({ orderNo: data.orderNo, variant: data.variant, status: "printed" });

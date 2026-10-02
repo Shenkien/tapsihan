@@ -9,10 +9,10 @@ test("kiosk orders: receipt at the kiosk, paid receipt at the counter", () => {
   assert.equal(receiptStation("KIOSK", "paid"), "counter");
 });
 
-test("staff-entered orders: counter printer at order time, no second slip when paid", () => {
-  assert.equal(receiptStation("COUNTER", "cash-pending"), "counter");
-  assert.equal(receiptStation("COUNTER", "gcash-pending"), "counter");
-  assert.equal(receiptStation("COUNTER", "paid"), null);
+test("staff-entered orders: nothing at order time, full receipt at the counter once paid", () => {
+  assert.equal(receiptStation("COUNTER", "cash-pending"), null);
+  assert.equal(receiptStation("COUNTER", "gcash-pending"), null);
+  assert.equal(receiptStation("COUNTER", "paid"), "counter");
 });
 
 test("QR orders never print a receipt", () => {
